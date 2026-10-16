@@ -20,7 +20,7 @@
     "db:up": "docker compose up -d postgres",
     "db:down": "docker compose down",
     "db:generate": "npm run generate -w @expense-tracker/db",
-    "db:migrate": "npm run migrate:dev -w @expense-tracker/db",
+    "db:migrate": "npm run migrate:dev -w @expense-tracker/db --",
     "db:studio": "npm run studio -w @expense-tracker/db"
   },
   "devDependencies": {

@@ -5,8 +5,7 @@
     "outDir": "dist",
     "types": ["node"],
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "incremental": true
+    "emitDecoratorMetadata": true
   },
   "include": ["src"]
 }
