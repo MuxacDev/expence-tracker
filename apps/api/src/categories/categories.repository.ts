@@ -15,6 +15,14 @@ export class CategoriesRepository {
     });
   }
 
+  async existsForUser(id: string, userId: string): Promise<boolean> {
+    const record = await this.prisma.client.category.findFirst({
+      where: { id, userId },
+      select: { id: true },
+    });
+    return record !== null;
+  }
+
   create(userId: string, data: CreateCategoryInput): Promise<CategoryRecord> {
     return this.prisma.client.category.create({ data: { ...data, userId } });
   }

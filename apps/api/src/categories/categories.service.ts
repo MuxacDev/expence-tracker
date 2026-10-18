@@ -42,6 +42,10 @@ export class CategoriesService {
       if (error.code === 'P2002') {
         return new ConflictException('Category with this name already exists');
       }
+      // FK transactions.category_id ON DELETE RESTRICT: на категорию ссылаются транзакции.
+      if (error.code === 'P2003') {
+        return new ConflictException('Category has transactions');
+      }
       // Записи нет или она принадлежит другому пользователю — не различаем.
       if (error.code === 'P2025') {
         return new NotFoundException('Category not found');
