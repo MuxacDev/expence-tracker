@@ -66,7 +66,7 @@ Rules (enforced by `npm run lint:fsd`, config in `apps/web/steiger.config.mjs`):
 - Import only from layers **below** yours; slices on the same layer never import each other. `@/` maps to `src/`.
 - Outside a slice, import it only through its `index.ts` public API (`@/features/auth/login`, not `.../ui/login-form`). Inside a slice, use relative imports.
 - Segments are named by purpose (`ui`, `api`, `model`, `lib`, `config`), not by kind (`components`, `hooks`, `providers` are rejected by steiger).
-- `shared/ui` has no index: import each component by file (`@/shared/ui/button`). This is where `npx shadcn@4.22.0 add <name>` writes (aliases in `components.json`). Check the result: the CLI swaps `cn` for the npm package `cn` when it can't resolve the utils alias, and adds deps with `^`.
+- `shared/ui` has no index: import each component by file (`@/shared/ui/button`). This is where `npx shadcn@4.22.0 add <name>` writes (aliases in `components.json`). After every `add`: shadcn 4.22 always imports `cn` from the npm package `cn` (even with correct aliases). Rewrite it to `@/shared/lib/utils`, `npm uninstall cn -w @expense-tracker/web`, and pin any new deps it added with `^`.
 - `fsd/insignificant-slice` is off globally: auth features are used by one page each on purpose. A `files:` override doesn't work in steiger 0.7, because files with the rule off drop out of reference counting and it then flags `entities/user` by mistake.
 
 Next.js wiring:
@@ -80,6 +80,7 @@ Auth on the web:
 - The token is in `localStorage` (`shared/api/token-storage.ts`). `apiFetch` adds `Authorization: Bearer`, and on a 401 for a request that carried a token it clears the token. Protection is client-side only, there is no `proxy.ts`/middleware.
 - `useSessionToken()` is `undefined` during SSR/hydration (unknown), `null` for a guest, or a string. Guards render a loader while it's `undefined`, so don't treat `undefined` as logged out.
 - Redirects after login/register/logout are done by the guards (`RequireGuest` on /login and /register, `RequireAuth` on /), not by the forms: the mutation just calls `startSession()` and primes `['user','me']`. Logout calls `queryClient.clear()`.
+- Register requires the "Согласен с пользовательским соглашением и политикой обработки данных" checkbox. It's checked only on the web (`acceptTerms` in `register-form-schema.ts`), it's not sent to the API and not stored. The links open `/terms` and `/privacy` in a new tab. Those pages are public placeholders, the legal text isn't written yet.
 - Server errors are shown inline: 409 under the email field, 401 and everything else as an `Alert` (form `root` error). Zod messages stay English (default locale). UI copy is Russian.
 
 ## Conventions
