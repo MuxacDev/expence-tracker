@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Early stage. Verified working: `npm install`, `npm run build` (all workspaces), `typecheck`, `lint`, Prisma migrations, and the api running from `dist` with auth (register/login/me). `npm run dev` has not been exercised yet. Web is still the scaffold page and doesn't call auth. The only Prisma model is `User`.
+Early stage. Verified working: `npm install`, `npm run build` (all workspaces), `typecheck`, `lint`, Prisma migrations, and the api running from `dist` with auth (register/login/me). `npm run dev` has not been exercised yet. Web is still the scaffold page and doesn't call auth. Prisma models: `User`, `Category`. Categories CRUD (`/api/categories`) is verified with curl.
 
 Requires **Node >= 24** (`.nvmrc`, `engines` in every package.json). Prisma 7 / ESLint 10 don't run on older Node.
 
@@ -42,6 +42,7 @@ Non-obvious wiring:
 - **Auth is on by default:** `JwtAuthGuard` is global (`APP_GUARD` in `apps/api/src/auth/auth.module.ts`), so every new route requires a Bearer token unless the controller/handler is marked `@Public()` (`auth/decorators/public.decorator.ts`). Use `@CurrentUser()` to get `{ id, email }`. Access token only (HS256, no refresh); the guard trusts the token payload and does not hit the DB.
 - **Cross-module calls go through CQRS** (`@nestjs/cqrs` 11.0.3, since 12.x needs Nest 12). A module exports nothing. Others import only its `contracts/` folder (typed `Command<T>`/`Query<T>` classes) and call `CommandBus`/`QueryBus`, e.g. auth → `apps/api/src/users/contracts`. Inside a module, use plain DI (controller → service → repository). Handlers are registered as module providers. A missing handler fails only at request time, so typecheck won't catch it.
 - **Users:** `UsersRepository` is the only place that touches `prisma.client.user`. `UserRecord` (with `passwordHash`) is internal; API responses use the shared `User` shape. Emails are lowercased by the zod schema. Passwords are capped at 72 UTF-8 bytes (the bcrypt limit).
+- **Categories:** every repository query filters by `{ id, userId }`, so someone else's category looks like a missing one (Prisma P2025 → 404, not 403). P2002 on unique `(user_id, name)` → 409. `color` is stored as lowercase `#rrggbb`, `icon` is a lucide kebab-case name. No `contracts/` yet (nothing outside the module uses categories).
 - **Module format:** `shared` and `db` compile with `tsc` to CJS `dist/` (Nest 11 is CommonJS); their package.json `main`/`exports` point to `dist`, so they must be built before api/web resolve them. Web consumes `shared` through `transpilePackages`.
 - **TypeScript 6.0.x is pinned** (not 7): typescript-eslint requires `<6.1`. `tsconfig.base.json` uses `module/moduleResolution: nodenext`; web overrides to `esnext/bundler`, api adds decorator flags. Don't enable `incremental` in api: `nest build` deletes `dist`, the stale `.tsbuildinfo` outside it makes tsc emit nothing, and the build still "succeeds". `packages/shared` has no DOM/node types (no `TextEncoder`, `Buffer`).
 - Pinned exact versions everywhere; Prisma is 7.10.1 because npm `latest` points at an 8.0 RC.
