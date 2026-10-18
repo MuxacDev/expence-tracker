@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Early stage. Verified working: `npm install`, `npm run build` (all workspaces), `typecheck`, `lint`, Prisma migrations, and the api running from `dist` with auth (register/login/me). `npm run dev` has not been exercised yet. Web is still the scaffold page and doesn't call auth. Prisma models: `User`, `Category`. Categories CRUD (`/api/categories`) is verified with curl.
+Early stage. Verified working: `npm install`, `npm run build` (all workspaces), `typecheck`, `lint`, Prisma migrations, and the api running from `dist` with auth (register/login/me). `npm run dev` has not been exercised yet. Web has login/register pages and a protected `/` (name + logout), verified end-to-end against the api with a headless browser (`next start`, not `next dev`). Prisma models: `User`, `Category`. Categories CRUD (`/api/categories`) is verified with curl.
 
 Requires **Node >= 24** (`.nvmrc`, `engines` in every package.json). Prisma 7 / ESLint 10 don't run on older Node.
 
@@ -18,7 +18,8 @@ npm run db:migrate -- --name <name>   # prisma migrate dev (always pass --name: 
 npm run db:studio
 npm run build         # all workspaces, packages/* first (order in "workspaces" matters)
 npm run dev           # concurrently: nest start --watch (api :4000) + next dev (web :3000)
-npm run lint | typecheck | format | format:check
+npm run lint | typecheck | format | format:check   # root lint also runs lint:fsd
+npm run lint:fsd      # steiger: FSD layer/slice rules for apps/web/src
 npm run <script> -w @expense-tracker/api   # target a single workspace
 ```
 
@@ -30,7 +31,7 @@ Env files are per-package, not a single root file: `packages/db/.env` (DATABASE_
 
 Monorepo of two apps and two internal packages, all named `@expense-tracker/*`:
 
-- `apps/web` — Next.js 16 App Router, Tailwind v4, shadcn/ui (config only, no components generated), TanStack Query + react-hook-form. Talks to the API over HTTP via `src/lib/api-client.ts`; never imports `@expense-tracker/db`.
+- `apps/web` — Next.js 16 App Router, Tailwind v4, shadcn/ui, TanStack Query + react-hook-form, organized by **Feature-Sliced Design** (see below). Talks to the API over HTTP via `apiFetch` in `src/shared/api`; never imports `@expense-tracker/db`.
 - `apps/api` — NestJS **11** (not 12: `nestjs-zod` 5.5 doesn't support Nest 12 yet). Global prefix `/api`, Swagger at `/api/docs`.
 - `packages/shared` — Zod schemas/types shared by web and api. Single source of truth for API contracts.
 - `packages/db` — Prisma 7 schema + generated client + `createPrismaClient()` (uses `@prisma/adapter-pg`).
@@ -46,6 +47,40 @@ Non-obvious wiring:
 - **Module format:** `shared` and `db` compile with `tsc` to CJS `dist/` (Nest 11 is CommonJS); their package.json `main`/`exports` point to `dist`, so they must be built before api/web resolve them. Web consumes `shared` through `transpilePackages`.
 - **TypeScript 6.0.x is pinned** (not 7): typescript-eslint requires `<6.1`. `tsconfig.base.json` uses `module/moduleResolution: nodenext`; web overrides to `esnext/bundler`, api adds decorator flags. Don't enable `incremental` in api: `nest build` deletes `dist`, the stale `.tsbuildinfo` outside it makes tsc emit nothing, and the build still "succeeds". `packages/shared` has no DOM/node types (no `TextEncoder`, `Buffer`).
 - Pinned exact versions everywhere; Prisma is 7.10.1 because npm `latest` points at an 8.0 RC.
+
+## Web: Feature-Sliced Design
+
+`apps/web` follows [FSD](https://feature-sliced.design). Layers in `apps/web/src`, top to bottom:
+
+```
+app/        providers (entrypoint/), global styles (styles/globals.css). No slices.
+pages/      one slice per screen: home, login, register. Composes features/entities + guards.
+widgets/    (not created yet) big reusable blocks of a page.
+features/   user actions. Grouped: features/auth/{login,register,logout}.
+entities/   business entities: session (token hook, RequireAuth/RequireGuest), user (useCurrentUser).
+shared/     ui/ (shadcn components), api/ (apiFetch, ApiError, tokenStorage), lib/ (cn), config/ (API_URL). No slices.
+```
+
+Rules (enforced by `npm run lint:fsd`, config in `apps/web/steiger.config.mjs`):
+
+- Import only from layers **below** yours; slices on the same layer never import each other. `@/` maps to `src/`.
+- Outside a slice, import it only through its `index.ts` public API (`@/features/auth/login`, not `.../ui/login-form`). Inside a slice, use relative imports.
+- Segments are named by purpose (`ui`, `api`, `model`, `lib`, `config`), not by kind (`components`, `hooks`, `providers` are rejected by steiger).
+- `shared/ui` has no index: import each component by file (`@/shared/ui/button`). This is where `npx shadcn@4.22.0 add <name>` writes (aliases in `components.json`). Check the result: the CLI swaps `cn` for the npm package `cn` when it can't resolve the utils alias, and adds deps with `^`.
+- `fsd/insignificant-slice` is off globally: auth features are used by one page each on purpose. A `files:` override doesn't work in steiger 0.7, because files with the rule off drop out of reference counting and it then flags `entities/user` by mistake.
+
+Next.js wiring:
+
+- Routes live in **`apps/web/app/`** (repo root of the web app, not `src/app`). Each `page.tsx` is a one-line re-export: `export { LoginPage as default, metadata } from '@/pages/login'`. Put no logic there.
+- `apps/web/pages/README.md` exists on purpose: when root `app/` or `pages/` exists, Next ignores `src/app` and `src/pages` for routing, so they can be FSD layers. Don't delete it or move routes into `src/`. Side effect: with both `app/` and `pages/` present, Next adds `navigation-types/compat/navigation` to `next-env.d.ts`, so `useSearchParams()`/`useParams()`/`usePathname()` are typed `| null`. Handle the null.
+- Hooks-using modules (`entities/*/model`, `*/api` with TanStack hooks) start with `'use client'`, because page slices are server components that import them through barrels.
+
+Auth on the web:
+
+- The token is in `localStorage` (`shared/api/token-storage.ts`). `apiFetch` adds `Authorization: Bearer`, and on a 401 for a request that carried a token it clears the token. Protection is client-side only, there is no `proxy.ts`/middleware.
+- `useSessionToken()` is `undefined` during SSR/hydration (unknown), `null` for a guest, or a string. Guards render a loader while it's `undefined`, so don't treat `undefined` as logged out.
+- Redirects after login/register/logout are done by the guards (`RequireGuest` on /login and /register, `RequireAuth` on /), not by the forms: the mutation just calls `startSession()` and primes `['user','me']`. Logout calls `queryClient.clear()`.
+- Server errors are shown inline: 409 under the email field, 401 and everything else as an `Alert` (form `root` error). Zod messages stay English (default locale). UI copy is Russian.
 
 ## Conventions
 
